@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
+  <meta name="theme-color" content="#0a0614"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+  <meta name="apple-mobile-web-app-title" content="Turner Ascend"/>
+  <title>Turner Ascend</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0;}
+    body{background:#0a0614;color:#e2d9f3;font-family:'DM Mono',monospace;-webkit-tap-highlight-color:transparent;overscroll-behavior:none;}
+    #root{min-height:100vh;}
+    input,textarea{transition:border-color 0.15s;}
+    input:focus,textarea:focus{border-color:#a855f7!important;outline:none;}
+    ::-webkit-scrollbar{width:4px;}::-webkit-scrollbar-track{background:#0a0614;}::-webkit-scrollbar-thumb{background:#2d1f47;border-radius:2px;}
+    .nt:hover{color:#c084fc!important;}.cd:hover{border-color:#a855f7!important;}.pb:hover{opacity:0.85;}.sb:hover{filter:brightness(1.1);}.evd:hover{background:#a855f710!important;border-color:#a855f755!important;}.nc:hover{border-color:#818cf8!important;}
+    details summary::-webkit-details-marker{display:none;}
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const {useState, useEffect} = React;
+
+const PRACTICE_TYPES=["Throwing","Hitting","Running","Gym"];
+const MONTHS=["January","February","March","April","May","June","July","August","September","October","November","December"];
+const DAYS=["S","M","T","W","T","F","S"];
+const VEL_CATEGORIES=[
+  {key:"throwingVel",label:"Throwing Velocity",unit:"mph",color:"#a855f7",icon:"🎯"},
+  {key:"hittingVel",label:"Exit Velocity",unit:"mph",color:"#e879f9",icon:"💥"},
+  {key:"dashTime",label:"60 Yard Dash",unit:"sec",color:"#38bdf8",icon:"⚡",inverse:true},
+];
+const PRACTICE_COLORS={Throwing:"#a855f7",Hitting:"#e879f9",Running:"#38bdf8",Gym:"#818cf8"};
+const EVENT_COLORS=["#a855f7","#e879f9","#38bdf8","#4ade80","#fbbf24","#f87171"];
+const GOAL_COLORS=["#a855f7","#e879f9","#38bdf8","#4ade80","#fbbf24","#f87171","#fb923c","#e2e8f0"];
+const INCOME_TARGETS=[100000,125000,150000,200000,250000,500000,1000000];
+const FEDERAL_HOLIDAYS_2024=new Set(["2024-01-01","2024-01-15","2024-02-19","2024-05-27","2024-06-19","2024-07-04","2024-09-02","2024-10-14","2024-11-11","2024-11-28","2024-12-25"]);
+
+function countTradingDays(){let c=0;const d=new Date("2024-01-01"),e=new Date("2024-12-31");while(d<=e){const w=d.getDay(),s=d.toISOString().slice(0,10);if(w!==0&&w!==6&&!FEDERAL_HOLIDAYS_2024.has(s))c++;d.setDate(d.getDate()+1);}return c;}
+const TRADING_DAYS=countTradingDays();
+const TRADING_WEEKS=TRADING_DAYS/5;
+
+function calcTax(gross){
+  const net=gross*0.9235,se=net*0.153,ded=se/2,agi=gross-ded,std=14600,tax=Math.max(0,agi-std);
+  const brackets=[[11600,0.10],[44725,0.12],[95375,0.22],[201050,0.24],[383900,0.32],[487450,0.35],[Infinity,0.37]];
+  const labels=["10%","12%","22%","24%","32%","35%","37%"];
+  let fed=0,prev=0,bd=[];
+  for(let i=0;i<brackets.length;i++){const[top,rate]=brackets[i];const chunk=Math.min(Math.max(tax-prev,0),top-prev);if(chunk<=0)break;fed+=chunk*rate;bd.push({label:labels[i],rate,amount:chunk*rate,income:chunk});prev=top;}
+  const total=fed+se;
+  return{fed,seTax:se,total,takeHome:gross-total,effectiveRate:(total/gross)*100,marginalRate:bd.length?bd[bd.length-1].rate*100:0,bracketBreakdown:bd,taxable:tax};
+}
+
+function getToday(){const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;}
+function getDIM(y,m){return new Date(y,m+1,0).getDate();}
+function getFD(y,m){return new Date(y,m,1).getDay();}
+const defDay=()=>({sleep:"",meals:"",practices:[],throwingVel:"",hittingVel:"",dashTime:"",notes:""});
+const fmt=n=>n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+const fmtK=n=>n>=1000000?`$${(n/1000000).toFixed(1)}M`:`$${(n/1000).toFixed(0)}K`;
+
+function VelChart({data,color,unit}){
+  if(data.length<2)return <div style={{textAlign:"center",color:"#4b3f6b",fontSize:12,padding:"22px 0",fontFamily:"'DM Mono',monospace"}}>Log 2+ entries to see trend</div>;
+  const W=520,H=150,PL=44,PR=16,PT=14,PB=28;
+  const vals=data.map(d=>d.val),lo=Math.min(...vals),hi=Math.max(...vals);
+  const pad=(hi-lo)*0.25||2,yLo=lo-pad,yHi=hi+pad,yR=yHi-yLo;
+  const toX=i=>PL+(i/(data.length-1))*(W-PL-PR);
+  const toY=v=>PT+(H-PT-PB)-((v-yLo)/yR)*(H-PT-PB);
+  const pts=data.map((d,i)=>`${toX(i)},${toY(d.val)}`).join(" ");
+  const area=`${toX(0)},${H-PB} `+pts+` ${toX(data.length-1)},${H-PB}`;
+  const li=data.length<=6?data.map((_,i)=>i):[0,Math.floor(data.length/3),Math.floor(2*data.length/3),data.length-1];
+  const gid=`g${color.replace("#","")}`;
+  return(<svg viewBox={`0 0 ${W} ${H}`} style={{width:"100%",display:"block"}}>
+    <defs><linearGradient id={gid} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={color} stopOpacity="0.22"/><stop offset="100%" stopColor={color} stopOpacity="0"/></linearGradient><filter id={`gl${gid}`}><feGaussianBlur stdDeviation="2" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>
+    {[0,0.25,0.5,0.75,1].map((t,i)=>{const y=PT+(H-PT-PB)*t,v=yHi-yR*t;return<g key={i}><line x1={PL} y1={y} x2={W-PR} y2={y} stroke="#2d1f47" strokeWidth="1"/><text x={PL-5} y={y+4} textAnchor="end" fill="#6b5f8a" fontSize="9" fontFamily="'DM Mono',monospace">{v.toFixed(unit==="sec"?2:0)}</text></g>;})}
+    <polygon points={area} fill={`url(#${gid})`}/>
+    <polyline points={pts} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" filter={`url(#gl${gid})`}/>
+    {data.map((d,i)=>(<g key={i}><circle cx={toX(i)} cy={toY(d.val)} r="5" fill="#120c1f" stroke={color} strokeWidth="2"/><circle cx={toX(i)} cy={toY(d.val)} r="2" fill={color}/></g>))}
+    {li.map(i=>(<text key={i} x={toX(i)} y={H-4} textAnchor="middle" fill="#4b3f6b" fontSize="9" fontFamily="'DM Mono',monospace">{data[i].date.slice(5)}</text>))}
+  </svg>);
+}
+
+function Card({children,style={}}){return<div style={{background:"linear-gradient(135deg,#1a0f2e,#130b24)",border:"1px solid #2d1f47",borderRadius:16,padding:"18px 20px",marginBottom:12,...style}}>{children}</div>;}
+function FL({color="#a855f7",children}){return<div style={{fontSize:10,fontWeight:700,color,textTransform:"uppercase",letterSpacing:"0.15em",marginBottom:10,fontFamily:"'DM Mono',monospace"}}>{children}</div>;}
+function SP({label,value,unit,color,highlight}){return<div style={{flex:1,background:highlight?color+"18":"#0e0820",border:`1px solid ${highlight?color:"#2d1f47"}`,borderRadius:10,padding:"10px 6px",textAlign:"center"}}><div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:19,color:highlight?color:"#6b5f8a",letterSpacing:"0.04em",lineHeight:1}}>{value}<span style={{fontSize:9,color:"#4b3f6b",marginLeft:1}}>{unit}</span></div><div style={{fontFamily:"'DM Mono',monospace",fontSize:7,color:"#4b3f6b",textTransform:"uppercase",letterSpacing:"0.08em",marginTop:3}}>{label}</div></div>;}
+
+const iS={background:"#0e0820",border:"1px solid #2d1f47",borderRadius:10,color:"#e2d9f3",padding:"10px 14px",fontSize:15,fontFamily:"'DM Mono',monospace",outline:"none",width:110};
+const nB={background:"transparent",border:"1px solid #2d1f47",color:"#6b5f8a",borderRadius:8,width:36,height:36,fontSize:18,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"};
+const TABS=[["calendar","CAL"],["log","LOG"],["stats","STATS"],["events","EVT"],["goals","💰"],["income","📈"],["colleges","🎓"]];
+
+function App(){
+  const today=getToday();
+  const [logs,setLogs]=useState(()=>{try{return JSON.parse(localStorage.getItem("ta_logs")||"{}");}catch{return{};}});
+  const [events,setEvents]=useState(()=>{try{return JSON.parse(localStorage.getItem("ta_events")||"{}");}catch{return{};}});
+  const [goals,setGoals]=useState(()=>{try{return JSON.parse(localStorage.getItem("ta_goals")||"[]");}catch{return[];}});
+  const [notes,setNotes]=useState(()=>{try{return JSON.parse(localStorage.getItem("ta_notes")||"[]");}catch{return[];}});
+  const [sel,setSel]=useState(today);
+  const [view,setView]=useState("calendar");
+  const [cY,setCY]=useState(new Date().getFullYear());
+  const [cM,setCM]=useState(new Date().getMonth());
+  const [form,setForm]=useState(defDay());
+  const [saved,setSaved]=useState(false);
+  const [aC,setAC]=useState(0);
+  const [eY,setEY]=useState(new Date().getFullYear());
+  const [eM,setEM]=useState(new Date().getMonth());
+  const [evtMod,setEvtMod]=useState(null);
+  const [evtF,setEvtF]=useState({title:"",time:"",color:"#a855f7",note:""});
+  const [evtE,setEvtE]=useState(null);
+  const [gMod,setGMod]=useState(false);
+  const [gF,setGF]=useState({label:"",amount:"",color:"#a855f7"});
+  const [gE,setGE]=useState(null);
+  const [iTab,setITab]=useState("breakdown");
+  const [nMod,setNMod]=useState(false);
+  const [nF,setNF]=useState({title:"",body:""});
+  const [nE,setNE]=useState(null);
+  const [openN,setOpenN]=useState(null);
+
+  useEffect(()=>{setForm(logs[sel]?{...defDay(),...logs[sel]}:defDay());setSaved(false);},[sel]);
+  useEffect(()=>{localStorage.setItem("ta_logs",JSON.stringify(logs));},[logs]);
+  useEffect(()=>{localStorage.setItem("ta_events",JSON.stringify(events));},[events]);
+  useEffect(()=>{localStorage.setItem("ta_goals",JSON.stringify(goals));},[goals]);
+  useEffect(()=>{localStorage.setItem("ta_notes",JSON.stringify(notes));},[notes]);
+
+  const save=()=>{setLogs(p=>({...p,[sel]:{...form}}));setSaved(true);setTimeout(()=>setSaved(false),2000);};
+  const togP=p=>setForm(f=>({...f,practices:f.practices.includes(p)?f.practices.filter(x=>x!==p):[...f.practices,p]}));
+  const shiftD=dir=>{const d=new Date(sel+"T12:00:00");d.setDate(d.getDate()+dir);setSel(d.toISOString().slice(0,10));};
+  const dim=getDIM(cY,cM),fd=getFD(cY,cM);
+  const cStr=d=>`${cY}-${String(cM+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
+  const pM=()=>{if(cM===0){setCM(11);setCY(y=>y-1);}else setCM(m=>m-1);};
+  const nM=()=>{if(cM===11){setCM(0);setCY(y=>y+1);}else setCM(m=>m+1);};
+  const edim=getDIM(eY,eM),efd=getFD(eY,eM);
+  const eStr=d=>`${eY}-${String(eM+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
+  const epM=()=>{if(eM===0){setEM(11);setEY(y=>y-1);}else setEM(m=>m-1);};
+  const enM=()=>{if(eM===11){setEM(0);setEY(y=>y+1);}else setEM(m=>m+1);};
+  const openEM=ds=>{setEvtMod(ds);setEvtE(null);setEvtF({title:"",time:"",color:"#a855f7",note:""});};
+  const saveEv=()=>{if(!evtF.title.trim())return;const l=events[evtMod]||[];if(evtE!==null){setEvents(p=>({...p,[evtMod]:l.map((e,i)=>i===evtE?{...evtF}:e)}));}else{setEvents(p=>({...p,[evtMod]:[...l,{...evtF}]}));}setEvtMod(null);};
+  const delEv=(ds,idx)=>{const l=(events[ds]||[]).filter((_,i)=>i!==idx);if(!l.length){const c={...events};delete c[ds];setEvents(c);}else setEvents(p=>({...p,[ds]:l}));setEvtMod(null);};
+  const editEv=(ds,idx)=>{setEvtMod(ds);setEvtE(idx);setEvtF({...events[ds][idx]});};
+  const totG=goals.reduce((s,g)=>s+parseFloat(g.amount||0),0);
+  const openAG=()=>{setGE(null);setGF({label:"",amount:"",color:"#a855f7"});setGMod(true);};
+  const openEG=i=>{setGE(i);setGF({...goals[i]});setGMod(true);};
+  const saveG=()=>{if(!gF.label.trim()||!gF.amount)return;if(gE!==null){setGoals(g=>g.map((x,i)=>i===gE?{...gF}:x));}else{setGoals(g=>[...g,{...gF}]);}setGMod(false);};
+  const delG=i=>{setGoals(g=>g.filter((_,idx)=>idx!==i));setGMod(false);};
+  const openAN=()=>{setNE(null);setNF({title:"",body:""});setNMod(true);};
+  const openEN=i=>{setNE(i);setNF({...notes[i]});setNMod(true);};
+  const saveN=()=>{if(!nF.title.trim())return;if(nE!==null){setNotes(n=>n.map((x,i)=>i===nE?{...nF,updated:getToday()}:x));}else{setNotes(n=>[{...nF,created:getToday(),updated:getToday()},...n]);}setNMod(false);};
+  const delN=i=>{setNotes(n=>n.filter((_,idx)=>idx!==i));setNMod(false);setOpenN(null);};
+  const cData=key=>Object.entries(logs).filter(([,v])=>v[key]&&!isNaN(parseFloat(v[key]))).map(([date,v])=>({date,val:parseFloat(v[key])})).sort((a,b)=>a.date.localeCompare(b.date));
+  const vStats=cat=>{const data=cData(cat.key);if(!data.length)return{avg:"--",high:"--",low:"--",data:[]};const vals=data.map(d=>d.val);return{avg:(vals.reduce((a,b)=>a+b,0)/vals.length).toFixed(cat.unit==="sec"?2:1),high:Math.max(...vals).toFixed(cat.unit==="sec"?2:0),low:Math.min(...vals).toFixed(cat.unit==="sec"?2:0),data};};
+  const aLogs=Object.values(logs);
+  const avgSleep=(()=>{const s=aLogs.filter(l=>l.sleep);return s.length?(s.reduce((a,l)=>a+parseFloat(l.sleep),0)/s.length).toFixed(1):"--";})();
+  const upEv=Object.entries(events).filter(([ds])=>ds>=today).sort((a,b)=>a[0].localeCompare(b[0])).slice(0,8);
+
+  return(
+    <div style={{minHeight:"100vh",background:"#0a0614",color:"#e2d9f3"}}>
+      {/* HEADER */}
+      <div style={{background:"linear-gradient(180deg,#130b24,#0a0614)",borderBottom:"1px solid #2d1f47",padding:"13px 16px",position:"sticky",top:0,zIndex:200,boxShadow:"0 4px 32px #a855f712"}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+          <div>
+            <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,letterSpacing:"0.12em",lineHeight:1}}>
+              <span style={{background:"linear-gradient(135deg,#a855f7,#e879f9)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>T</span>
+              <span style={{color:"#e2d9f3"}}>URNER </span>
+              <span style={{background:"linear-gradient(135deg,#a855f7,#e879f9)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>A</span>
+              <span style={{color:"#e2d9f3"}}>SCEND</span>
+            </div>
+            <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:"#4b3f6b",letterSpacing:"0.18em"}}>BASEBALL PERFORMANCE SYSTEM</div>
+          </div>
+        </div>
+        <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+          {TABS.map(([v,l])=>(<button key={v} className="nt" onClick={()=>setView(v)} style={{background:view===v?"#a855f722":"transparent",color:view===v?"#a855f7":"#4b3f6b",border:`1px solid ${view===v?"#a855f7":"#2d1f47"}`,borderRadius:8,padding:"5px 9px",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"'DM Mono',monospace",letterSpacing:"0.06em"}}>{l}</button>))}
+        </div>
+      </div>
+
+      <div style={{maxWidth:580,margin:"0 auto",padding:"18px 14px 48px"}}>
+
+        {/* CALENDAR */}
+        {view==="calendar"&&<div>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
+            <button onClick={pM} style={nB}>‹</button>
+            <span style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,letterSpacing:"0.12em",color:"#e2d9f3"}}>{MONTHS[cM]} {cY}</span>
+            <button onClick={nM} style={nB}>›</button>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3,marginBottom:4}}>
+            {DAYS.map((d,i)=><div key={i} style={{textAlign:"center",fontSize:10,color:"#4b3f6b",fontFamily:"'DM Mono',monospace",padding:"3px 0",fontWeight:700}}>{d}</div>)}
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3}}>
+            {Array(fd).fill(null).map((_,i)=><div key={`e${i}`}/>)}
+            {Array(dim).fill(null).map((_,i)=>{
+              const d=i+1,ds=cStr(d),log=logs[ds],isSel=ds===sel,isT=ds===today,hasE=(events[ds]||[]).length>0;
+              return(<button key={d} className="cd" onClick={()=>{setSel(ds);setView("log");}} style={{background:isSel?"#a855f718":"#110820",border:`1px solid ${isSel?"#a855f7":isT?"#3d2f5e":"#1e1530"}`,borderRadius:10,padding:"5px 2px 6px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:2,minHeight:52,transition:"all 0.12s"}}>
+                <span style={{fontSize:13,fontWeight:700,fontFamily:"'DM Mono',monospace",color:isSel?"#a855f7":isT?"#c084fc":"#8b7aaa"}}>{d}</span>
+                {log?.practices?.length>0&&<div style={{display:"flex",gap:2,flexWrap:"wrap",justifyContent:"center"}}>{log.practices.map(p=><div key={p} style={{width:5,height:5,borderRadius:"50%",background:PRACTICE_COLORS[p]}}/>)}</div>}
+                {log?.throwingVel&&<span style={{fontSize:8,color:"#a855f7",fontFamily:"'DM Mono',monospace",fontWeight:700}}>{log.throwingVel}</span>}
+                {hasE&&<div style={{width:5,height:5,borderRadius:"50%",background:"#fbbf24"}}/>}
+              </button>);
+            })}
+          </div>
+        </div>}
+
+        {/* LOG */}
+        {view==="log"&&<div>
+          <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:16}}>
+            <button onClick={()=>shiftD(-1)} style={nB}>‹</button>
+            <div style={{flex:1,textAlign:"center"}}>
+              <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,letterSpacing:"0.1em",color:"#e2d9f3"}}>{new Date(sel+"T12:00:00").toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"})}</div>
+              {sel===today&&<div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#a855f7",letterSpacing:"0.15em"}}>TODAY</div>}
+            </div>
+            <button onClick={()=>shiftD(1)} style={nB}>›</button>
+          </div>
+          <Card><FL color="#818cf8">😴 Sleep</FL>
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <input type="number" min="0" max="24" step="0.5" placeholder="0.0" value={form.sleep} onChange={e=>setForm(f=>({...f,sleep:e.target.value}))} style={iS}/>
+              <span style={{color:"#4b3f6b",fontSize:13,fontFamily:"'DM Mono',monospace"}}>hours</span>
+              {form.sleep&&<div style={{marginLeft:"auto",padding:"4px 12px",borderRadius:20,background:parseFloat(form.sleep)>=8?"#16a34a22":parseFloat(form.sleep)>=6?"#ca8a0422":"#dc262622",color:parseFloat(form.sleep)>=8?"#4ade80":parseFloat(form.sleep)>=6?"#fbbf24":"#f87171",fontSize:10,fontWeight:700,fontFamily:"'DM Mono',monospace"}}>{parseFloat(form.sleep)>=8?"OPTIMAL":parseFloat(form.sleep)>=6?"OK":"LOW"}</div>}
+            </div>
+          </Card>
+          <Card><FL color="#e879f9">🍽️ Nutrition</FL>
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <input type="number" min="0" max="10" placeholder="0" value={form.meals} onChange={e=>setForm(f=>({...f,meals:e.target.value}))} style={iS}/>
+              <span style={{color:"#4b3f6b",fontSize:13,fontFamily:"'DM Mono',monospace"}}>meals today</span>
+            </div>
+          </Card>
+          <Card><FL color="#a855f7">⚾ Practice Type</FL>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+              {PRACTICE_TYPES.map(p=>(<button key={p} className="pb" onClick={()=>togP(p)} style={{background:form.practices.includes(p)?PRACTICE_COLORS[p]+"28":"#0e0820",border:`1.5px solid ${form.practices.includes(p)?PRACTICE_COLORS[p]:"#2d1f47"}`,color:form.practices.includes(p)?PRACTICE_COLORS[p]:"#4b3f6b",borderRadius:10,padding:"9px 14px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"'DM Mono',monospace",textTransform:"uppercase",transition:"all 0.15s"}}>{p==="Throwing"?"🎯":p==="Hitting"?"💥":p==="Running"?"⚡":"💪"} {p}</button>))}
+            </div>
+          </Card>
+          <Card><FL color="#a855f7">🔥 Performance</FL>
+            <div style={{display:"flex",flexDirection:"column",gap:14}}>
+              {VEL_CATEGORIES.map(cat=>(<div key={cat.key}>
+                <div style={{fontSize:10,color:cat.color,fontFamily:"'DM Mono',monospace",letterSpacing:"0.1em",marginBottom:6,textTransform:"uppercase"}}>{cat.icon} {cat.label}</div>
+                <div style={{display:"flex",alignItems:"center",gap:10}}>
+                  <input type="number" min="0" step={cat.unit==="sec"?"0.01":"1"} placeholder={cat.unit==="sec"?"0.00":"0"} value={form[cat.key]} onChange={e=>setForm(f=>({...f,[cat.key]:e.target.value}))} style={{...iS,color:cat.color,fontWeight:700}}/>
+                  <span style={{color:"#4b3f6b",fontSize:13,fontFamily:"'DM Mono',monospace"}}>{cat.unit}</span>
+                  {form[cat.key]&&<div style={{marginLeft:"auto",fontFamily:"'Bebas Neue',sans-serif",fontSize:24,color:cat.color}}>{form[cat.key]}<span style={{fontSize:11,color:"#4b3f6b"}}>{cat.unit}</span></div>}
+                </div>
+              </div>))}
+            </div>
+          </Card>
+          <Card><FL color="#818cf8">📋 Notes</FL>
+            <textarea placeholder="How did it feel?" value={form.notes} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} rows={3} style={{...iS,width:"100%",resize:"vertical",fontSize:13}}/>
+          </Card>
+          <button className="sb" onClick={save} style={{width:"100%",background:saved?"#16a34a22":"linear-gradient(135deg,#a855f7,#7c3aed)",border:saved?"1px solid #4ade80":"none",color:saved?"#4ade80":"#fff",borderRadius:12,padding:"14px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"'DM Mono',monospace",letterSpacing:"0.15em",textTransform:"uppercase",transition:"all 0.2s",boxShadow:saved?"none":"0 4px 24px #a855f733"}}>
+            {saved?"✓  SAVED":"SAVE DAY LOG"}
+          </button>
+        </div>}
+
+        {/* STATS */}
+        {view==="stats"&&<div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:18}}>
+            {[{label:"Avg Sleep",value:`${avgSleep}h`,color:"#818cf8",icon:"😴"},{label:"Days Logged",value:Object.keys(logs).length,color:"#a855f7",icon:"📅"},{label:"Sessions",value:aLogs.filter(l=>l.practices?.length>0).length,color:"#818cf8",icon:"⚾"},{label:"Events",value:Object.keys(events).length,color:"#fbbf24",icon:"📌"}].map(s=>(<div key={s.label} style={{background:"linear-gradient(135deg,#130b24,#0e0820)",border:`1px solid ${s.color}22`,borderRadius:14,padding:"14px",borderLeft:`3px solid ${s.color}`}}><div style={{fontSize:16,marginBottom:3}}>{s.icon}</div><div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:26,color:s.color,letterSpacing:"0.04em",lineHeight:1}}>{s.value}</div><div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:"#4b3f6b",textTransform:"uppercase",letterSpacing:"0.12em",marginTop:3}}>{s.label}</div></div>))}
+          </div>
+          <Card style={{marginBottom:16}}><FL color="#a855f7">📊 Velocity Summary</FL>
+            {VEL_CATEGORIES.map(cat=>{const s=vStats(cat);return(<div key={cat.key} style={{marginBottom:16}}><div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:cat.color,textTransform:"uppercase",letterSpacing:"0.12em",marginBottom:8}}>{cat.icon} {cat.label}</div><div style={{display:"flex",gap:6}}><SP label="Average" value={s.avg} unit={cat.unit} color={cat.color}/><SP label={cat.inverse?"Best":"Highest"} value={cat.inverse?s.low:s.high} unit={cat.unit} color={cat.color} highlight/><SP label={cat.inverse?"Worst":"Lowest"} value={cat.inverse?s.high:s.low} unit={cat.unit} color="#6b5f8a"/></div></div>);})}
+          </Card>
+          <div style={{display:"flex",gap:6,marginBottom:10}}>
+            {VEL_CATEGORIES.map((cat,i)=>(<button key={cat.key} onClick={()=>setAC(i)} style={{flex:1,background:aC===i?cat.color+"22":"transparent",border:`1px solid ${aC===i?cat.color:"#2d1f47"}`,color:aC===i?cat.color:"#4b3f6b",borderRadius:8,padding:"7px 4px",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:"'DM Mono',monospace",textTransform:"uppercase",transition:"all 0.15s"}}>{cat.icon} {cat.label.split(" ")[0]}</button>))}
+          </div>
+          {VEL_CATEGORIES.map((cat,i)=>{
+            if(i!==aC)return null;
+            const s=vStats(cat),data=s.data||[];
+            const lat=data.length?data[data.length-1].val:null,prv=data.length>=2?data[data.length-2].val:null;
+            const trend=lat!==null&&prv!==null?(cat.inverse?prv-lat:lat-prv):null;
+            return(<Card key={cat.key}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}><div><div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:17,color:cat.color,letterSpacing:"0.1em"}}>{cat.icon} {cat.label}</div><div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:"#4b3f6b",textTransform:"uppercase"}}>{data.length} entries</div></div><div style={{display:"flex",gap:10}}>{s.avg!=="--"&&<div style={{textAlign:"right"}}><div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,color:cat.color,lineHeight:1}}>{s.avg}<span style={{fontSize:9,color:"#4b3f6b"}}>{cat.unit}</span></div><div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:"#4b3f6b",textTransform:"uppercase"}}>AVG</div></div>}{trend!==null&&<div style={{textAlign:"right"}}><div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,color:trend>0?"#4ade80":trend<0?"#f87171":"#6b5f8a",lineHeight:1}}>{trend>0?"+":""}{trend.toFixed(cat.unit==="sec"?2:1)}</div><div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:"#4b3f6b",textTransform:"uppercase"}}>CHANGE</div></div>}</div></div><VelChart data={data} color={cat.color} unit={cat.unit}/></Card>);
+          })}
+          <Card><FL color="#a855f7">Practice Breakdown</FL>
+            {PRACTICE_TYPES.map(p=>{const cnt=aLogs.filter(l=>l.practices?.includes(p)).length;const tot=aLogs.filter(l=>l.practices?.length>0).length;const pct=tot?Math.round((cnt/tot)*100):0;return(<div key={p} style={{marginBottom:10}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}><span style={{fontFamily:"'DM Mono',monospace",fontSize:10,fontWeight:700,color:PRACTICE_COLORS[p]}}>{p.toUpperCase()}</span><span style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:"#4b3f6b"}}>{cnt} sessions</span></div><div style={{background:"#1a0f2e",borderRadius:4,height:4,overflow:"hidden"}}><div style={{width:`${pct}%`,height:"100%",background:`linear-gradient(90deg,${PRACTICE_COLORS[p]},${PRACTICE_COLORS[p]}88)`,borderRadius:4}}/></div></div>);})}
+          </Card>
+        </div>}
+
+        {/* EVENTS */}
+        {view==="events"&&<div>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
+            <button onClick={epM} style={nB}>‹</button>
+            <span style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,letterSpacing:"0.12em",color:"#e2d9f3"}}>{MONTHS[eM]} {eY}</span>
+            <button onClick={enM} style={nB}>›</button>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3,marginBottom:4}}>
+            {DAYS.map((d,i)=><div key={i} style={{textAlign:"center",fontSize:10,color:"#4b3f6b",fontFamily:"'DM Mono',monospace",padding:"3px 0",fontWeight:700}}>{d}</div>)}
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3,marginBottom:20}}>
+            {Array(efd).fill(null).map((_,i)=><div key={`ee${i}`}/>)}
+            {Array(edim).fill(null).map((_,i)=>{
+              const d=i+1,ds=eStr(d),dE=events[ds]||[],isT=ds===today;
+              return(<button key={d} className="evd" onClick={()=>openEM(ds)} style={{background:"#110820",border:`1px solid ${isT?"#3d2f5e":"#1e1530"}`,borderRadius:10,padding:"5px 2px 6px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:2,minHeight:56,transition:"all 0.12s"}}>
+                <span style={{fontSize:12,fontWeight:700,fontFamily:"'DM Mono',monospace",color:isT?"#c084fc":"#8b7aaa"}}>{d}</span>
+                {dE.slice(0,2).map((ev,ei)=>(<div key={ei} style={{width:"88%",background:ev.color+"33",border:`1px solid ${ev.color}55`,borderRadius:3,padding:"1px 3px",fontSize:7,color:ev.color,fontFamily:"'DM Mono',monospace",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ev.title}</div>))}
+                {dE.length>2&&<div style={{fontSize:7,color:"#4b3f6b",fontFamily:"'DM Mono',monospace"}}>+{dE.length-2}</div>}
+              </button>);
+            })}
+          </div>
+          {upEv.length>0&&<Card><FL color="#fbbf24">📌 Upcoming</FL>
+            {upEv.map(([ds,evs])=>evs.map((ev,ei)=>(<div key={`${ds}-${ei}`} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:"1px solid #1e1530"}}><div style={{width:3,height:34,borderRadius:2,background:ev.color,flexShrink:0}}/><div style={{flex:1,minWidth:0}}><div style={{fontFamily:"'DM Mono',monospace",fontSize:12,color:"#e2d9f3",fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ev.title}</div><div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#4b3f6b"}}>{ds}{ev.time?` · ${ev.time}`:""}</div></div><button onClick={()=>editEv(ds,ei)} style={{background:"transparent",border:"1px solid #2d1f47",borderRadius:6,color:"#6b5f8a",fontSize:9,cursor:"pointer",padding:"3px 8px",fontFamily:"'DM Mono',monospace"}}>EDIT</button></div>)))}
+          </Card>}
+        </div>}
+
+        {/* GOALS */}
+        {view==="goals"&&<div>
+          {/* Total banner */}
+          <div style={{background:"linear-gradient(135deg,#1a0728,#0e0820)",border:"1px solid #a855f733",borderRadius:18,padding:"20px",marginBottom:14,textAlign:"center"}}>
+            <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#6b5f8a",textTransform:"uppercase",letterSpacing:"0.15em",marginBottom:6}}>💰 Total You Need to Make</div>
+            <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:42,letterSpacing:"0.06em",lineHeight:1,background:"linear-gradient(135deg,#a855f7,#e879f9)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>${fmt(totG)}</div>
+            {totG>0&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginTop:16}}>
+              {[{label:"Per Day",val:`${fmt(totG/365)}`,icon:"📆",color:"#38bdf8"},{label:"Per Week",val:`${fmt(totG/52)}`,icon:"🗓️",color:"#4ade80"},{label:"Per Month",val:`${fmt(totG/12)}`,icon:"📅",color:"#fbbf24"},{label:"Per Year",val:`${fmt(totG)}`,icon:"🏆",color:"#a855f7"}].map(r=>(<div key={r.label} style={{background:"#0e0820",border:`1px solid ${r.color}33`,borderRadius:12,padding:"12px 8px"}}><div style={{fontSize:14,marginBottom:3}}>{r.icon}</div><div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,color:r.color,letterSpacing:"0.04em",lineHeight:1}}>{r.val}</div><div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:"#4b3f6b",textTransform:"uppercase",letterSpacing:"0.1em",marginTop:3}}>{r.label}</div></div>))}
+            </div>}
+          </div>
+
+          {/* Goals list */}
+          {goals.length===0&&<div style={{textAlign:"center",color:"#4b3f6b",fontFamily:"'DM Mono',monospace",fontSize:12,padding:"28px 0"}}>No goals yet — tap below to add one</div>}
+          {goals.length>0&&<div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:14}}>
+            {goals.map((g,i)=>{
+              const amt=parseFloat(g.amount)||0;
+              return(
+                <div key={i} style={{background:"linear-gradient(135deg,#1a0f2e,#130b24)",border:"1px solid #2d1f47",borderRadius:14,padding:"14px 16px"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+                    <div style={{width:4,height:36,borderRadius:2,background:g.color,flexShrink:0}}/>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontFamily:"'DM Mono',monospace",fontSize:13,color:"#e2d9f3",fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{g.label}</div>
+                      <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:20,color:g.color,letterSpacing:"0.04em",lineHeight:1.2}}>${fmt(amt)}</div>
+                    </div>
+                    <div style={{display:"flex",gap:6,flexShrink:0}}>
+                      <button onClick={()=>openEG(i)} style={{background:"#a855f722",border:"1px solid #a855f7",borderRadius:8,color:"#a855f7",fontSize:10,cursor:"pointer",padding:"6px 12px",fontFamily:"'DM Mono',monospace",fontWeight:700}}>EDIT</button>
+                      <button onClick={()=>delG(i)} style={{background:"#dc262622",border:"1px solid #f87171",borderRadius:8,color:"#f87171",fontSize:10,cursor:"pointer",padding:"6px 10px",fontFamily:"'DM Mono',monospace",fontWeight:700}}>✕</button>
+                    </div>
+                  </div>
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:6}}>
+                    {[{l:"Day",v:amt/365,c:"#38bdf8"},{l:"Week",v:amt/52,c:"#4ade80"},{l:"Month",v:amt/12,c:"#fbbf24"},{l:"Year",v:amt,c:"#a855f7"}].map(({l,v,c})=>(
+                      <div key={l} style={{background:"#0e0820",border:`1px solid ${c}22`,borderRadius:8,padding:"7px 4px",textAlign:"center"}}>
+                        <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:12,color:c,lineHeight:1}}>${fmt(v)}</div>
+                        <div style={{fontFamily:"'DM Mono',monospace",fontSize:7,color:"#4b3f6b",textTransform:"uppercase",marginTop:3}}>/{l}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>}
+
+          <button onClick={openAG} style={{width:"100%",background:"linear-gradient(135deg,#a855f7,#7c3aed)",border:"none",color:"#fff",borderRadius:12,padding:"14px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"'DM Mono',monospace",letterSpacing:"0.15em",textTransform:"uppercase",boxShadow:"0 4px 24px #a855f733"}}>+ ADD GOAL / EXPENSE</button>
+        </div>}
+
+        {/* INCOME */}
+        {view==="income"&&<div>
+          <div style={{display:"flex",gap:6,marginBottom:16}}>
+            {[["breakdown","📈 Breakdown"],["taxes","🧾 Taxes"]].map(([t,l])=>(<button key={t} onClick={()=>setITab(t)} style={{flex:1,background:iTab===t?"#a855f722":"transparent",border:`1px solid ${iTab===t?"#a855f7":"#2d1f47"}`,color:iTab===t?"#a855f7":"#4b3f6b",borderRadius:10,padding:"10px 6px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"'DM Mono',monospace",transition:"all 0.15s"}}>{l}</button>))}
+          </div>
+          {iTab==="breakdown"&&<div>
+            <div style={{background:"#1a0f2e",border:"1px solid #38bdf833",borderRadius:10,padding:"10px 14px",marginBottom:14,fontFamily:"'DM Mono',monospace",fontSize:9,color:"#6b5f8a",lineHeight:1.5}}>📊 Based on <span style={{color:"#38bdf8",fontWeight:700}}>{TRADING_DAYS} trading days</span> — weekdays only, no federal holidays.</div>
+            {INCOME_TARGETS.map(target=>(<Card key={target} style={{marginBottom:10}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+                <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:26,letterSpacing:"0.08em",background:"linear-gradient(135deg,#a855f7,#e879f9)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>{fmtK(target)}</div>
+                <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#4b3f6b",textTransform:"uppercase"}}>annual target</div>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:6}}>
+                {[{l:`Trading Day`,v:target/TRADING_DAYS,c:"#38bdf8"},{l:`Trading Week`,v:target/TRADING_WEEKS,c:"#4ade80"},{l:"Per Month",v:target/12,c:"#fbbf24"},{l:"Full Year",v:target,c:"#a855f7"}].map(({l,v,c})=>(<div key={l} style={{background:"#0e0820",border:`1px solid ${c}22`,borderRadius:10,padding:"10px 8px",borderLeft:`2px solid ${c}`}}><div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:target>=500000?13:15,color:c,lineHeight:1}}>${fmt(v)}</div><div style={{fontFamily:"'DM Mono',monospace",fontSize:7,color:"#4b3f6b",textTransform:"uppercase",letterSpacing:"0.06em",marginTop:4}}>{l}</div></div>))}
+              </div>
+            </Card>))}
+          </div>}
+          {iTab==="taxes"&&<div>
+            <div style={{background:"#1a0f2e",border:"1px solid #fbbf2433",borderRadius:12,padding:"12px 14px",marginBottom:14}}>
+              <div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:"#fbbf24",textTransform:"uppercase",letterSpacing:"0.12em",marginBottom:4}}>⚠️ Estimates Only</div>
+              <div style={{fontFamily:"'DM Mono',monospace",fontSize:10,color:"#6b5f8a",lineHeight:1.5}}>2024 federal brackets, single filer, self-employed. <span style={{color:"#4ade80",fontWeight:700}}>Florida = $0 state tax.</span></div>
+            </div>
+            {INCOME_TARGETS.map(target=>{
+              const t=calcTax(target);
+              return(<Card key={target} style={{marginBottom:12}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+                  <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:26,letterSpacing:"0.08em",background:"linear-gradient(135deg,#a855f7,#e879f9)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>{fmtK(target)}</div>
+                  <div style={{textAlign:"right"}}><div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:16,color:"#f87171",lineHeight:1}}>{t.effectiveRate.toFixed(1)}% eff</div><div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:"#fbbf24"}}>Top: {t.marginalRate.toFixed(0)}%</div></div>
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:10}}>
+                  {[{l:"Federal Income Tax",v:t.fed,c:"#f87171"},{l:"Self-Employment (15.3%)",v:t.seTax,c:"#fb923c"},{l:"Florida State Tax",v:0,c:"#4ade80",note:"$0 — No state tax!"},{l:"Total Tax Owed",v:t.total,c:"#fbbf24"}].map(({l,v,c,note})=>(<div key={l} style={{background:"#0e0820",border:`1px solid ${c}22`,borderRadius:10,padding:"10px 8px",borderLeft:`2px solid ${c}`}}><div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:14,color:c,lineHeight:1}}>{note||`$${fmt(v)}`}</div><div style={{fontFamily:"'DM Mono',monospace",fontSize:7,color:"#4b3f6b",textTransform:"uppercase",letterSpacing:"0.05em",marginTop:3,lineHeight:1.3}}>{l}</div></div>))}
+                </div>
+                <div style={{background:"linear-gradient(135deg,#0e1f14,#0e0820)",border:"1px solid #4ade8033",borderRadius:10,padding:"10px 12px",marginBottom:10}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <div><div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:"#6b5f8a",textTransform:"uppercase"}}>💵 Take-Home Pay</div><div style={{fontFamily:"'DM Mono',monospace",fontSize:8,color:"#4b3f6b",marginTop:1}}>${fmt(t.takeHome/12)}/mo</div></div>
+                    <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,color:"#4ade80"}}>${fmt(t.takeHome)}</div>
+                  </div>
+                </div>
+                <details>
+                  <summary style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#6b5f8a",cursor:"pointer",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:6}}>▸ Bracket Breakdown</summary>
+                  <div style={{marginTop:8}}>
+                    {t.bracketBreakdown.map((b,i)=>(<div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"4px 0",borderBottom:"1px solid #1a0f2e"}}><span style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:14,color:["#38bdf8","#4ade80","#fbbf24","#fb923c","#f87171","#e879f9","#a855f7"][i],width:36}}>{b.label}</span><span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#6b5f8a"}}>${fmt(b.income)}</span><span style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#e2d9f3",fontWeight:700}}>${fmt(b.amount)}</span></div>))}
+                  </div>
+                </details>
+              </Card>);
+            })}
+          </div>}
+        </div>}
+
+        {/* COLLEGES */}
+        {view==="colleges"&&<div>
+          {openN!==null&&openN<notes.length?(<div>
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}>
+              <button onClick={()=>setOpenN(null)} style={{...nB,fontSize:14}}>←</button>
+              <div style={{flex:1,fontFamily:"'Bebas Neue',sans-serif",fontSize:20,letterSpacing:"0.1em",color:"#e2d9f3",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{notes[openN].title}</div>
+              <button onClick={()=>openEN(openN)} style={{background:"transparent",border:"1px solid #2d1f47",borderRadius:8,color:"#6b5f8a",fontSize:10,cursor:"pointer",padding:"6px 12px",fontFamily:"'DM Mono',monospace"}}>EDIT</button>
+            </div>
+            <Card style={{minHeight:200}}><div style={{fontFamily:"'DM Mono',monospace",fontSize:13,color:"#c4b5d9",lineHeight:1.7,whiteSpace:"pre-wrap"}}>{notes[openN].body||<span style={{color:"#2d1f47",fontStyle:"italic"}}>No content yet.</span>}</div></Card>
+          </div>):(<div>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
+              <div><div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:22,letterSpacing:"0.1em",color:"#e2d9f3"}}>🎓 Colleges</div><div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#4b3f6b"}}>{notes.length} note{notes.length!==1?"s":""}</div></div>
+              <button onClick={openAN} style={{background:"linear-gradient(135deg,#818cf8,#6366f1)",border:"none",color:"#fff",borderRadius:10,padding:"9px 16px",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"'DM Mono',monospace",letterSpacing:"0.1em"}}>+ NEW NOTE</button>
+            </div>
+            {notes.length===0&&<div style={{textAlign:"center",padding:"48px 0"}}><div style={{fontSize:32,marginBottom:10}}>🎓</div><div style={{fontFamily:"'DM Mono',monospace",fontSize:12,color:"#4b3f6b"}}>No notes yet</div></div>}
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {notes.map((n,i)=>(<button key={i} className="nc" onClick={()=>setOpenN(i)} style={{background:"linear-gradient(135deg,#1a0f2e,#130b24)",border:"1px solid #2d1f47",borderRadius:14,padding:"14px 16px",cursor:"pointer",textAlign:"left",transition:"border-color 0.15s",display:"flex",alignItems:"center",gap:12}}>
+                <div style={{width:4,height:40,borderRadius:2,background:"#818cf8",flexShrink:0}}/>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:13,color:"#e2d9f3",fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{n.title}</div>
+                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#4b3f6b",marginTop:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{n.body?n.body.slice(0,60)+(n.body.length>60?"…":""):"No content"}</div>
+                </div>
+                <div style={{color:"#2d1f47",fontSize:18}}>›</div>
+              </button>))}
+            </div>
+          </div>)}
+        </div>}
+      </div>
+
+      {/* EVENT MODAL */}
+      {evtMod&&<div style={{position:"fixed",inset:0,background:"#00000090",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>{if(e.target===e.currentTarget)setEvtMod(null);}}>
+        <div style={{background:"#130b24",border:"1px solid #2d1f47",borderRadius:18,padding:22,width:"100%",maxWidth:380,boxShadow:"0 20px 60px #00000077"}}>
+          <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,color:"#a855f7",letterSpacing:"0.1em",marginBottom:14}}>{evtE!==null?"EDIT EVENT":"ADD EVENT"}</div>
+          <div style={{marginBottom:10}}><div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#6b5f8a",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:5}}>Event Name *</div><input type="text" placeholder="Showcase, Tryout…" value={evtF.title} onChange={e=>setEvtF(f=>({...f,title:e.target.value}))} style={{...iS,width:"100%",fontSize:14}}/></div>
+          <div style={{marginBottom:10}}><div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#6b5f8a",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:5}}>Time</div><input type="text" placeholder="10:00 AM" value={evtF.time} onChange={e=>setEvtF(f=>({...f,time:e.target.value}))} style={{...iS,width:"100%",fontSize:14}}/></div>
+          <div style={{marginBottom:12}}><div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#6b5f8a",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:7}}>Color</div><div style={{display:"flex",gap:8}}>{EVENT_COLORS.map(c=>(<button key={c} onClick={()=>setEvtF(f=>({...f,color:c}))} style={{width:26,height:26,borderRadius:"50%",background:c,border:evtF.color===c?"3px solid #fff":"3px solid transparent",cursor:"pointer"}}/>))}</div></div>
+          <div style={{marginBottom:18}}><div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#6b5f8a",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:5}}>Note</div><textarea placeholder="Details…" value={evtF.note} onChange={e=>setEvtF(f=>({...f,note:e.target.value}))} rows={2} style={{...iS,width:"100%",resize:"none",fontSize:13}}/></div>
+          <div style={{display:"flex",gap:8}}>
+            {evtE!==null&&<button onClick={()=>delEv(evtMod,evtE)} style={{flex:1,background:"#dc262622",border:"1px solid #f87171",color:"#f87171",borderRadius:10,padding:"11px",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"'DM Mono',monospace"}}>DELETE</button>}
+            <button onClick={()=>setEvtMod(null)} style={{flex:1,background:"transparent",border:"1px solid #2d1f47",color:"#6b5f8a",borderRadius:10,padding:"11px",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"'DM Mono',monospace"}}>CANCEL</button>
+            <button onClick={saveEv} style={{flex:2,background:"linear-gradient(135deg,#a855f7,#7c3aed)",border:"none",color:"#fff",borderRadius:10,padding:"11px",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"'DM Mono',monospace"}}>{evtE!==null?"SAVE":"ADD"}</button>
+          </div>
+        </div>
+      </div>}
+
+      {/* GOAL MODAL */}
+      {gMod&&<div style={{position:"fixed",inset:0,background:"#00000090",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>{if(e.target===e.currentTarget)setGMod(false);}}>
+        <div style={{background:"#130b24",border:"1px solid #2d1f47",borderRadius:18,padding:22,width:"100%",maxWidth:380,boxShadow:"0 20px 60px #00000077"}}>
+          <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,color:"#4ade80",letterSpacing:"0.1em",marginBottom:14}}>{gE!==null?"EDIT GOAL":"ADD GOAL"}</div>
+          <div style={{marginBottom:12}}><div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#6b5f8a",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:5}}>Label *</div><input type="text" placeholder="Rent, Car Payment…" value={gF.label} onChange={e=>setGF(f=>({...f,label:e.target.value}))} style={{...iS,width:"100%",fontSize:14}}/></div>
+          <div style={{marginBottom:14}}><div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#6b5f8a",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:5}}>Annual Amount ($) *</div><input type="number" min="0" step="0.01" placeholder="0.00" value={gF.amount} onChange={e=>setGF(f=>({...f,amount:e.target.value}))} style={{...iS,width:"100%",fontSize:16,color:"#4ade80",fontWeight:700}}/>
+            {gF.amount&&!isNaN(parseFloat(gF.amount))&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6,marginTop:8}}>
+              {[["Per Month",12],["Per Week",52],["Per Day",365]].map(([l,d])=>(<div key={l} style={{background:"#0e0820",border:"1px solid #2d1f47",borderRadius:8,padding:"7px 4px",textAlign:"center"}}><div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:13,color:"#4ade80",lineHeight:1}}>${fmt(parseFloat(gF.amount)/d)}</div><div style={{fontFamily:"'DM Mono',monospace",fontSize:7,color:"#4b3f6b",textTransform:"uppercase",marginTop:2}}>{l}</div></div>))}
+            </div>}
+          </div>
+          <div style={{marginBottom:20}}><div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#6b5f8a",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:7}}>Color</div><div style={{display:"flex",gap:8,flexWrap:"wrap"}}>{GOAL_COLORS.map(c=>(<button key={c} onClick={()=>setGF(f=>({...f,color:c}))} style={{width:26,height:26,borderRadius:"50%",background:c,border:gF.color===c?"3px solid #fff":"3px solid transparent",cursor:"pointer"}}/>))}</div></div>
+          <div style={{display:"flex",gap:8}}>
+            {gE!==null&&<button onClick={()=>delG(gE)} style={{flex:1,background:"#dc262622",border:"1px solid #f87171",color:"#f87171",borderRadius:10,padding:"11px",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"'DM Mono',monospace"}}>DELETE</button>}
+            <button onClick={()=>setGMod(false)} style={{flex:1,background:"transparent",border:"1px solid #2d1f47",color:"#6b5f8a",borderRadius:10,padding:"11px",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"'DM Mono',monospace"}}>CANCEL</button>
+            <button onClick={saveG} style={{flex:2,background:"linear-gradient(135deg,#4ade80,#16a34a)",border:"none",color:"#fff",borderRadius:10,padding:"11px",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"'DM Mono',monospace"}}>{gE!==null?"SAVE":"ADD"}</button>
+          </div>
+        </div>
+      </div>}
+
+      {/* NOTE MODAL */}
+      {nMod&&<div style={{position:"fixed",inset:0,background:"#00000090",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>{if(e.target===e.currentTarget)setNMod(false);}}>
+        <div style={{background:"#130b24",border:"1px solid #2d1f47",borderRadius:18,padding:22,width:"100%",maxWidth:420,boxShadow:"0 20px 60px #00000077",maxHeight:"90vh",overflowY:"auto"}}>
+          <div style={{fontFamily:"'Bebas Neue',sans-serif",fontSize:18,color:"#818cf8",letterSpacing:"0.1em",marginBottom:14}}>{nE!==null?"EDIT NOTE":"NEW NOTE"}</div>
+          <div style={{marginBottom:12}}><div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#6b5f8a",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:5}}>Title *</div><input type="text" placeholder="UCLA, Duke, Vanderbilt…" value={nF.title} onChange={e=>setNF(f=>({...f,title:e.target.value}))} style={{...iS,width:"100%",fontSize:14}}/></div>
+          <div style={{marginBottom:18}}><div style={{fontFamily:"'DM Mono',monospace",fontSize:9,color:"#6b5f8a",textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:5}}>Notes</div><textarea placeholder="Scholarship info, visit notes, pros/cons…" value={nF.body} onChange={e=>setNF(f=>({...f,body:e.target.value}))} rows={8} style={{...iS,width:"100%",resize:"vertical",fontSize:13,lineHeight:1.6}}/></div>
+          <div style={{display:"flex",gap:8}}>
+            {nE!==null&&<button onClick={()=>delN(nE)} style={{flex:1,background:"#dc262622",border:"1px solid #f87171",color:"#f87171",borderRadius:10,padding:"11px",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"'DM Mono',monospace"}}>DELETE</button>}
+            <button onClick={()=>setNMod(false)} style={{flex:1,background:"transparent",border:"1px solid #2d1f47",color:"#6b5f8a",borderRadius:10,padding:"11px",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"'DM Mono',monospace"}}>CANCEL</button>
+            <button onClick={saveN} style={{flex:2,background:"linear-gradient(135deg,#818cf8,#6366f1)",border:"none",color:"#fff",borderRadius:10,padding:"11px",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"'DM Mono',monospace"}}>{nE!==null?"SAVE":"CREATE"}</button>
+          </div>
+        </div>
+      </div>}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
